@@ -273,8 +273,15 @@ else
 fi
 
 # --- 6. Write the gesture config --------------------------------------------
-say "Writing $CONFIG_FILE"
-mkdir -p "$CONFIG_DIR"
+# Two versions of the config are kept in $GESTURE_DIR: one with the cube gestures and one
+# without. cube-gesture-sync (installed below) copies whichever matches the Cube effect's
+# on/off setting into $CONFIG_FILE, so when the cube is turned off in System Settings the
+# 3-finger up/down swipes go back to KDE, and when it's turned on they control the cube again.
+GESTURE_DIR="$HOME/.local/share/cube-gesture"
+GESTURES_ON="$GESTURE_DIR/gestures-on.yaml"
+GESTURES_OFF="$GESTURE_DIR/gestures-off.yaml"
+say "Writing the gesture configs"
+mkdir -p "$CONFIG_DIR" "$GESTURE_DIR"
 CUBE_IS_OPEN="$QDBUS org.kde.KWin /Effects org.freedesktop.DBus.Properties.Get org.kde.kwin.Effects activeEffects | grep -qx cube"
 TOGGLE_CUBE="$QDBUS org.kde.kglobalaccel /component/kwin org.kde.kglobalaccel.Component.invokeShortcut $SHORTCUT_NAME"
 NEW_CONFIG="$(cat <<EOF
@@ -307,14 +314,81 @@ touchpad:
 EOF
 )"
 
-if [[ -f "$CONFIG_FILE" ]] && [[ "$(cat "$CONFIG_FILE")" == "$NEW_CONFIG" ]]; then
-  echo "Config is already up to date; left it unchanged."
+OFF_CONFIG="$(cat <<'EOF'
+# InputActions config: the Desktop Cube effect is turned off, so the 3-finger cube gestures are
+# disabled and those swipes go back to KDE. They come back automatically when the Cube effect is
+# turned on again (System Settings -> Window Management -> Desktop Effects -> Cube).
+# This file is managed by 3-Finger-Cube-Gesture; edit ~/.local/share/cube-gesture/gestures-on.yaml instead.
+touchpad:
+  gestures: []
+EOF
+)"
+
+# Keep a backup if the current config is something other than ours (e.g. your own InputActions setup).
+if [[ -f "$CONFIG_FILE" ]] && [[ "$(cat "$CONFIG_FILE")" != "$NEW_CONFIG" ]] && [[ "$(cat "$CONFIG_FILE")" != "$OFF_CONFIG" ]] \
+  && ! { [[ -f "$GESTURES_ON" ]] && cmp -s "$CONFIG_FILE" "$GESTURES_ON"; }; then
+  cp "$CONFIG_FILE" "$CONFIG_FILE.bak.$(date +%Y%m%d-%H%M%S)"
+  echo "Backed up your existing config."
+fi
+printf '%s\n' "$NEW_CONFIG" > "$GESTURES_ON"
+printf '%s\n' "$OFF_CONFIG" > "$GESTURES_OFF"
+
+say "Installing the Cube on/off watcher"
+SYNC="$HOME/.local/bin/cube-gesture-sync"
+UNIT_DIR="$HOME/.config/systemd/user"
+mkdir -p "$HOME/.local/bin" "$UNIT_DIR"
+cat > "$SYNC" <<'EOF'
+#!/usr/bin/env bash
+# cube-gesture-sync: give the 3-finger up/down swipes to the Desktop Cube only while the Cube
+# effect is enabled; otherwise leave them to KDE. Run by cube-gesture-sync.path whenever
+# ~/.config/kwinrc changes, and at login (installed by 3-Finger-Cube-Gesture's install.sh).
+set -u
+GESTURE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/cube-gesture"
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/inputactions/config.yaml"
+
+# The Cube effect is off by default, so a missing setting means off.
+if [[ "$(kreadconfig6 --file kwinrc --group Plugins --key cubeEnabled --default false)" == "true" ]]; then
+  want="$GESTURE_DIR/gestures-on.yaml"
 else
-  if [[ -f "$CONFIG_FILE" ]]; then
-    cp "$CONFIG_FILE" "$CONFIG_FILE.bak.$(date +%Y%m%d-%H%M%S)"
-    echo "Backed up your existing config."
-  fi
-  printf '%s\n' "$NEW_CONFIG" > "$CONFIG_FILE"
+  want="$GESTURE_DIR/gestures-off.yaml"
+fi
+[[ -f "$want" ]] || exit 0
+cmp -s "$want" "$CONFIG_FILE" && exit 0
+
+# Replace the file atomically: InputActions reloads its config as soon as the file changes and
+# could otherwise read it half-written.
+mkdir -p "$(dirname "$CONFIG_FILE")"
+cp "$want" "$CONFIG_FILE.tmp.$$" && mv -f "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"
+EOF
+chmod 755 "$SYNC"
+cat > "$UNIT_DIR/cube-gesture-sync.path" <<'EOF'
+# Installed by 3-Finger-Cube-Gesture's install.sh
+[Unit]
+Description=Watch KDE settings for the Desktop Cube being turned on or off
+
+[Path]
+PathChanged=%h/.config/kwinrc
+Unit=cube-gesture-sync.service
+
+[Install]
+WantedBy=default.target
+EOF
+cat > "$UNIT_DIR/cube-gesture-sync.service" <<'EOF'
+# Installed by 3-Finger-Cube-Gesture's install.sh
+[Unit]
+Description=Turn the 3-finger cube gestures on or off to match the Desktop Cube effect
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/cube-gesture-sync
+EOF
+systemctl --user daemon-reload
+systemctl --user enable --now cube-gesture-sync.path
+"$SYNC"
+if cmp -s "$CONFIG_FILE" "$GESTURES_ON"; then
+  echo "Cube is on: 3-finger up/down control the cube."
+else
+  echo "Cube is off: 3-finger up/down are left to KDE until you turn the cube on."
 fi
 
 # --- 7. (Re)load the effect -------------------------------------------------
@@ -344,6 +418,9 @@ cat > "$CHECK" <<'EOF'
 BUILT_FILE=/var/lib/cube-gesture/built-for
 SEEN_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cube-gesture"
 SEEN_FILE="$SEEN_DIR/notified-for"
+
+# Match the gestures to the Cube effect's on/off setting, in case it changed while logged out.
+"$HOME/.local/bin/cube-gesture-sync" || true
 
 kwin="$(rpm -q --qf '%{VERSION}-%{RELEASE}' kwin)" || exit 0
 built="$(cat "$BUILT_FILE" 2>/dev/null)"

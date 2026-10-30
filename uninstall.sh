@@ -2,7 +2,8 @@
 # uninstall.sh - 3-Finger-Cube-Gesture
 #
 # Removes everything install.sh added: the InputActions KWin plugin, the automatic-rebuild
-# helper and its dnf hook / boot service, the touchpad udev rule, and the login check.
+# helper and its dnf hook / boot service, the touchpad udev rule, the login check, and the
+# Cube on/off watcher.
 #
 # Kept unless you pass --purge:
 #   ~/.config/inputactions/config.yaml   (renamed to config.yaml.uninstalled-<date>)
@@ -80,10 +81,14 @@ if [[ -f "$UDEV_RULE_FILE" ]]; then
   sudo udevadm trigger --subsystem-match=input --action=change
 fi
 
-# --- 5. Login check ----------------------------------------------------------
-say "Removing the login check"
+# --- 5. Login check and Cube on/off watcher ----------------------------------
+say "Removing the login check and the Cube on/off watcher"
+systemctl --user disable --now cube-gesture-sync.path 2>/dev/null || true
+rm -f "$HOME/.config/systemd/user/cube-gesture-sync.path" "$HOME/.config/systemd/user/cube-gesture-sync.service"
+systemctl --user daemon-reload 2>/dev/null || true
+rm -f "$HOME/.local/bin/cube-gesture-sync"
 rm -f "$HOME/.local/bin/cube-gesture-check" "$HOME/.config/autostart/cube-gesture-check.desktop"
-rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/cube-gesture"
+rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/cube-gesture" "${XDG_DATA_HOME:-$HOME/.local/share}/cube-gesture"
 
 # --- 6. Config and source ----------------------------------------------------
 if $PURGE; then
