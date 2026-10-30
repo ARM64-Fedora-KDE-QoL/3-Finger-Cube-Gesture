@@ -151,6 +151,8 @@ sudo dnf install git gcc-c++ cmake extra-cmake-modules pkgconf-pkg-config \
 
 `kwin-devel` must be the same version as `kwin`. Check with `rpm -q kwin kwin-devel`; if the versions differ, run `sudo dnf upgrade kwin kwin-devel` first.
 
+**Keep these packages installed.** The automatic rebuild after every KWin update uses the build tools and libraries above. If you remove any of them (for example because they look unused), the next KWin update can't rebuild the plugin: the gestures stop working and you get the *"Cube gesture needs a rebuild"* warning at login. Reinstall them with the command above, then re-run `./install.sh`. Removing `git` also stops the patched cube from being rebuilt after KDE updates, so KDE's own cube is used (without smooth swiping) until you reinstall it. `dnf autoremove` won't remove them, because the installer installs them on purpose.
+
 ## What it changes on your system
 
 | What | Where | Why |
@@ -171,6 +173,27 @@ sudo dnf install git gcc-c++ cmake extra-cmake-modules pkgconf-pkg-config \
 | Boot check | `cube-gesture-rebuild.service` (systemd) | Backstop if the hook didn't run |
 | Login check | `~/.local/bin/cube-gesture-check`, `~/.config/autostart/cube-gesture-check.desktop` | Notifies you about rebuilds or failures |
 | Rebuild log | `/var/log/cube-gesture-rebuild.log` | Output of every rebuild |
+
+## Disk space and memory
+
+Measured on the test laptop (Fedora 44 Asahi, KDE Plasma 6.7.5).
+
+**Disk space: about 35 MB**, plus the build packages.
+
+| What | Size |
+|---|---|
+| Root-owned source copy and build, kept for automatic rebuilds (`/var/lib/cube-gesture/`) | 27 MB |
+| InputActions source (`~/.local/src/inputactions-kwin`) | 3 MB |
+| The KWin plugin | 3 MB |
+| Patched cube, patches, configs, scripts, systemd units, rebuild log | under 1 MB |
+| [Build packages](#packages-it-needs) from Fedora | about 115 MB for the listed packages, more with the packages they pull in (some may already be installed) |
+
+**Memory: about 5–10 MB.** Nothing runs as its own program:
+
+- **The gesture plugin** runs inside KWin and adds a few MB to KWin's memory.
+- **The patched cube** uses the same memory as KDE's own cube while it's open, and nothing while it's closed.
+- **The watchers** (`.path` units) are file-change notifications handled by systemd. The update and login services start only after an update or at login, and exit within seconds.
+- **A rebuild after a KWin update** briefly uses a few hundred MB for about a minute, then frees it.
 
 ## How KWin and KDE updates are handled
 
