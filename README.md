@@ -14,13 +14,15 @@ If you turn the Desktop Cube effect **off**, the 3-finger up/down swipes are aut
 
 It uses the [InputActions](https://github.com/InputActions/kwin) KWin plugin, which the installer builds from source. It also sets up **automatic rebuilds after KWin updates**, so the gesture keeps working without you doing anything.
 
+**Related projects:** [**Cube-Backside-Click**](https://github.com/ARM64-Fedora-KDE-QoL/Cube-Backside-Click) lets you click the *back* of a desktop inside the open cube to switch to it (KDE's cube normally ignores that). Both are part of [**ARM64-Fedora-KDE-QoL**](https://github.com/ARM64-Fedora-KDE-QoL/ARM64-Fedora-KDE-QoL), which installs them together.
+
 **InputActions version:** the installer builds the InputActions KWin plugin's **v0.9.2.1** stable release, from the project's maintained [`InputActions/kwin`](https://github.com/InputActions/kwin) repository. It's pinned to that exact release, so a future upstream change can't break new installs.
 
 ## Versions
 
 There are three releases of this project. **The gestures, installer and automatic rebuilds are the same in all of them.** v2.0 changed which copy of InputActions is built (so it keeps working longer); v3.0 adds automatic handling of the Desktop Cube being turned off.
 
-| | [v1.0](https://github.com/Cynders-dev/3-Finger-Cube-Gesture/releases/tag/v1.0) (old) | [v2.0](https://github.com/Cynders-dev/3-Finger-Cube-Gesture/releases/tag/v2.0) | **[v3.0](https://github.com/Cynders-dev/3-Finger-Cube-Gesture/releases/tag/v3.0) (current, recommended)** |
+| | [v1.0](https://github.com/ARM64-Fedora-KDE-QoL/3-Finger-Cube-Gesture/releases/tag/v1.0) (old) | [v2.0](https://github.com/ARM64-Fedora-KDE-QoL/3-Finger-Cube-Gesture/releases/tag/v2.0) | **[v3.0](https://github.com/ARM64-Fedora-KDE-QoL/3-Finger-Cube-Gesture/releases/tag/v3.0) (current, recommended)** |
 |---|---|---|---|
 | InputActions source | Frozen snapshot from InputActions' former main repository (~v0.9.0) | Maintained [`InputActions/kwin`](https://github.com/InputActions/kwin), stable release v0.9.2.1 | Same as v2.0 |
 | Still getting fixes upstream? | **No.** That repository stopped receiving updates | **Yes.** It's where InputActions development happens now | **Yes** |
@@ -56,7 +58,7 @@ sudo dnf install git
 Then download and run the installer:
 
 ```bash
-git clone https://github.com/Cynders-dev/3-Finger-Cube-Gesture.git
+git clone https://github.com/ARM64-Fedora-KDE-QoL/3-Finger-Cube-Gesture.git
 cd 3-Finger-Cube-Gesture
 ./install.sh
 ```
