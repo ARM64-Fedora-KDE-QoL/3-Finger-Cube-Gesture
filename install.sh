@@ -3,10 +3,13 @@
 #
 #   3-finger swipe up   on the touchpad -> open the KDE Desktop Cube
 #   3-finger swipe down on the touchpad -> close it
+#   3- or 4-finger swipe left/right while the cube is open -> turn the cube smoothly with the
+#                                                             fingers, as far as they go
 #
 # For Fedora KDE Plasma 6 (Wayland), tested on Fedora Asahi Remix 44 (Apple Silicon MacBook).
 # Builds the InputActions KWin plugin (https://github.com/InputActions/kwin, release v0.9.2.1) from source,
-# installs it, writes the gesture config, and sets up automatic rebuilds after KWin updates.
+# installs it, writes the gesture config, installs a small patch to KDE's cube for smooth
+# swiping, and sets up automatic rebuilds after KWin and KDE updates.
 # See README.md for exactly what it changes on your system.
 #
 # Usage (as your normal user; it asks for sudo when needed):
@@ -26,6 +29,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$HOME/.local/src/inputactions-kwin"
 
 # InputActions version this project was tested with: the KWin plugin's v0.9.2.1 stable release.
@@ -49,6 +53,13 @@ fi
 if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
   warn "You don't appear to be in a Wayland session. InputActions' KWin plugin needs Plasma Wayland."
 fi
+
+for f in cube-smooth-swipe.patch kde-cube-patches-sync; do
+  if [[ ! -f "$SCRIPT_DIR/$f" ]]; then
+    echo "$f is missing; run install.sh from the 3-Finger-Cube-Gesture folder."
+    exit 1
+  fi
+done
 
 # Ask for the sudo password once, then keep sudo's timestamp fresh in the background so a long
 # package download or build doesn't make it ask again partway through.
@@ -284,14 +295,53 @@ say "Writing the gesture configs"
 mkdir -p "$CONFIG_DIR" "$GESTURE_DIR"
 CUBE_IS_OPEN="$QDBUS org.kde.KWin /Effects org.freedesktop.DBus.Properties.Get org.kde.kwin.Effects activeEffects | grep -qx cube"
 TOGGLE_CUBE="$QDBUS org.kde.kglobalaccel /component/kwin org.kde.kglobalaccel.Component.invokeShortcut $SHORTCUT_NAME"
+# Smooth swiping: three versions of the same swipe (straight and the two diagonals); see the
+# comments in the config below.
+CUBE_SWIPES=""
+for swipe in "left_right 2" "left_up_right_down 3" "left_down_right_up 3"; do
+  read -r direction interval <<<"$swipe"
+  CUBE_SWIPES+="${CUBE_SWIPES:+$'\n'}$(cat <<EOF
+
+    - type: swipe
+      fingers: 3-4
+      direction: $direction
+      conditions: \$plasma_overview_active
+      actions:
+        - on: update
+          interval: -$interval
+          input:
+            - mouse: [ wheel -1 0 ]
+        - on: update
+          interval: $interval
+          input:
+            - mouse: [ wheel 1 0 ]
+        - on: end
+          input:
+            - keyboard: [ pause ]
+        - on: cancel
+          input:
+            - keyboard: [ leftshift+pause ]
+EOF
+)"
+done
 NEW_CONFIG="$(cat <<EOF
 # InputActions config:
 #   3-finger swipe up   -> open the Desktop Cube (does nothing if it's already open)
 #   3-finger swipe down -> close the Desktop Cube (does nothing if it's already closed)
+#   3- or 4-finger swipe left/right while the cube is open -> turn the cube smoothly
 # Docs: https://wiki.inputactions.org/main/
 #
 # The cube's shortcut action (kwin,$SHORTCUT_NAME) is a toggle, so each gesture first asks KWin
 # whether the cube is currently running and only toggles when that's the right move.
+
+# Swipe directions within 25 degrees of straight left/right/up/down count as that direction (the
+# default is 20); the rest counts as diagonal. This keeps the cube's diagonal swipes (below) from
+# reading near-vertical movement.
+device_rules:
+  - conditions: \$touchpad
+    swipe:
+      angle_tolerance: 25
+
 touchpad:
   gestures:
     - type: swipe
@@ -303,14 +353,43 @@ touchpad:
             $CUBE_IS_OPEN
             || $TOGGLE_CUBE
 
+    # A fresh swipe down closes the cube right away. A swipe down that grows out of another
+    # swipe without the fingers lifting (e.g. a long cube swipe that drifts downwards) has to
+    # travel 80 units first, so a drifting long swipe doesn't close the cube by accident.
+    # InputActions updates \$time_since_last_trigger while any gesture moves, so it is only a few
+    # milliseconds when one swipe turns into another.
     - type: swipe
       fingers: 3
       direction: down
+      conditions: \$time_since_last_trigger > 150
       actions:
         - on: begin
           command: >-
             $CUBE_IS_OPEN
             && $TOGGLE_CUBE
+
+    - type: swipe
+      fingers: 3
+      direction: down
+      conditions: \$time_since_last_trigger <= 150
+      threshold: 80
+      actions:
+        - on: begin
+          command: >-
+            $CUBE_IS_OPEN
+            && $TOGGLE_CUBE
+
+    # While the cube is open: 3- or 4-finger left/right swipes turn it smoothly, as far as the
+    # fingers go. Every 2 units of sideways movement sends one horizontal wheel step to the cube.
+    # Lifting the fingers presses Pause, which makes the cube snap to a desktop.
+    # \$plasma_overview_active is true while the cube is open (3-Finger-Cube-Gesture's cube
+    # patch makes it so); when the cube is closed these swipes are left to KDE as usual.
+    # The two diagonal versions keep a change of direction turning the cube: InputActions
+    # restarts the swipe when its direction changes, and picks whichever version matches. The
+    # restart cancels the previous one, which presses Shift+Pause so that the cube treats the
+    # whole touch as one swipe. Diagonal steps come every 3 units of movement, which is about 2
+    # units sideways. For all three, movement to the left counts as negative and to the right
+    # as positive.${CUBE_SWIPES}
 EOF
 )"
 
@@ -391,7 +470,26 @@ else
   echo "Cube is off: 3-finger up/down are left to KDE until you turn the cube on."
 fi
 
-# --- 7. (Re)load the effect -------------------------------------------------
+# --- 7. Smooth swiping: patch KDE's cube ------------------------------------
+# The cube needs a small patch to turn with the swipe steps above and to let InputActions tell
+# that it's open. kde-cube-patches-sync (shared with Cube-Backside-Click, which also patches the
+# cube) keeps a patched per-user copy of KDE's cube in ~/.local/share/kwin/effects/cube, rebuilt
+# automatically when Fedora updates KDE's cube. If a future KDE version changes the cube so the
+# patch no longer fits, KDE's own cube is used and the left/right swipes go back to KDE.
+say "Installing the smooth-swiping cube patch"
+ENGINE="$HOME/.local/bin/kde-cube-patches-sync"
+engine_version() { sed -n 's/^ENGINE_VERSION=//p' "$1" 2>/dev/null || true; }
+mkdir -p "$HOME/.local/bin" "${XDG_DATA_HOME:-$HOME/.local/share}/kde-cube-patches"
+# Keep a newer copy if another project installed one.
+installed_engine="$(engine_version "$ENGINE")"
+if [[ -z "$installed_engine" || "$installed_engine" -le "$(engine_version "$SCRIPT_DIR/kde-cube-patches-sync")" ]]; then
+  install -m 755 "$SCRIPT_DIR/kde-cube-patches-sync" "$ENGINE"
+fi
+install -m 644 "$SCRIPT_DIR/cube-smooth-swipe.patch" \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/kde-cube-patches/3-finger-cube-gesture.patch"
+"$ENGINE" --setup
+
+# --- 8. (Re)load the effect -------------------------------------------------
 # Unload first so KWin picks up the freshly installed plugin and the plugin re-opens
 # the touchpad with the access granted in step 4.
 say "Loading the InputActions effect in KWin"
@@ -406,7 +504,7 @@ for effect in inputactions kwin_gestures; do
   fi
 done
 
-# --- 8. Login check ---------------------------------------------------------
+# --- 9. Login check ---------------------------------------------------------
 # At each login: warn if the plugin isn't built for the installed KWin (the automatic rebuild
 # failed or didn't run), or say once that it was rebuilt if that wasn't announced already.
 say "Installing the login check"
@@ -453,6 +551,8 @@ EOF
 say "Done"
 if $ENABLED; then
   echo "Swipe up with three fingers to open the cube, and down with three fingers to close it."
+  echo "Log out and back in once to activate smooth swiping (KWin loads the cube at login); then"
+  echo "swipe left/right with 3 or 4 fingers in the open cube to turn it."
 else
   echo "Couldn't load the effect automatically. Log out and back in, then go to:"
   echo "  System Settings -> Window Management -> Desktop Effects -> enable 'InputActions'"

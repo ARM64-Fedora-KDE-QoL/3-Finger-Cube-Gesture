@@ -2,12 +2,14 @@
 # uninstall.sh - 3-Finger-Cube-Gesture
 #
 # Removes everything install.sh added: the InputActions KWin plugin, the automatic-rebuild
-# helper and its dnf hook / boot service, the touchpad udev rule, the login check, and the
-# Cube on/off watcher.
+# helper and its dnf hook / boot service, the touchpad udev rule, the login check, the
+# Cube on/off watcher, and the smooth-swiping cube patch (the patched cube is rebuilt without
+# it, or removed if no other project's patch is left).
 #
 # Kept unless you pass --purge:
 #   ~/.config/inputactions/config.yaml   (renamed to config.yaml.uninstalled-<date>)
 #   ~/.local/src/inputactions-kwin        (the downloaded source)
+#   ~/.config/3-finger-cube-gesture       (the "smooth swiping turned off" setting, if you made one)
 # Always kept: the build packages installed with dnf (kwin-devel, cmake, ...).
 #
 # Usage (as your normal user; it asks for sudo when needed):
@@ -90,12 +92,22 @@ rm -f "$HOME/.local/bin/cube-gesture-sync"
 rm -f "$HOME/.local/bin/cube-gesture-check" "$HOME/.config/autostart/cube-gesture-check.desktop"
 rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/cube-gesture" "${XDG_DATA_HOME:-$HOME/.local/share}/cube-gesture"
 
-# --- 6. Config and source ----------------------------------------------------
+# --- 6. Smooth-swiping cube patch --------------------------------------------
+say "Removing the smooth-swiping cube patch"
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/kde-cube-patches/3-finger-cube-gesture.patch"
+# Rebuilds the patched cube with the other projects' patches, or removes it (and the shared
+# patcher) if none are left.
+if [[ -x "$HOME/.local/bin/kde-cube-patches-sync" ]]; then
+  "$HOME/.local/bin/kde-cube-patches-sync" --remove-if-unused || true
+fi
+
+# --- 7. Config and source ----------------------------------------------------
 if $PURGE; then
   say "Removing the gesture config and downloaded source (--purge)"
   rm -f "$CONFIG_FILE"
   rmdir "$(dirname "$CONFIG_FILE")" 2>/dev/null || true
   rm -rf "$SRC_DIR"
+  rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/3-finger-cube-gesture"
 elif [[ -f "$CONFIG_FILE" ]]; then
   say "Setting the gesture config aside"
   mv "$CONFIG_FILE" "$CONFIG_FILE.uninstalled-$(date +%Y%m%d-%H%M%S)"
@@ -104,7 +116,8 @@ fi
 
 # --- Done -------------------------------------------------------------------
 say "Done"
-echo "The gestures stop working right away; log out and back in to finish unloading the plugin."
+echo "The gestures stop working right away; log out and back in to finish unloading the plugin"
+echo "and the smooth-swiping cube patch."
 if ! $PURGE; then
   echo "Kept: $SRC_DIR and your old config (next to $CONFIG_FILE). Use --purge to remove them too."
 fi

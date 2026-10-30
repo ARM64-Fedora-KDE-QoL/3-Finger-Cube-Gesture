@@ -1,0 +1,256 @@
+Name: smooth swiping
+
+3-Finger-Cube-Gesture v4.0: turn the cube smoothly with 3- or 4-finger left/right swipes, as
+far as the fingers go (with InputActions; see README.md). Made against KDE Plasma 6.7.5's Desktop Cube.
+
+--- a/contents/ui/main.qml
++++ b/contents/ui/main.qml
+@@ -12,6 +12,9 @@
+     id: effect
+ 
+     property bool activated: false
++    // Lets InputActions tell that the cube is open: its $plasma_overview_active variable is true
++    // while the active fullscreen effect has a property with this name. The value isn't used.
++    property bool overviewGestureInProgress: false
+     readonly property int animationDuration: Kirigami.Units.longDuration
+ 
+     // stored as a property to keep the component alive and cleanup afterwards
+--- a/contents/ui/ScreenView.qml
++++ b/contents/ui/ScreenView.qml
+@@ -25,14 +25,16 @@
+         }
+     }
+ 
+-    function switchTo(desktop) {
++    function setCurrentDesktop(desktop) {
+         if (typeof KWinComponents.Workspace.setCurrentDesktopForScreen === "function") {
+             KWinComponents.Workspace.setCurrentDesktopForScreen(desktop, root.targetScreen);
+         } else {
+             // Fallback for kwin-x11
+             KWinComponents.Workspace.currentDesktop = desktop;
+         }
+-
++    }
++    function switchTo(desktop) {
++        setCurrentDesktop(desktop);
+         effect.deactivate();
+     }
+     function switchToSelected() {
+@@ -120,11 +122,17 @@
+             ]
+ 
+             Behavior on rotation {
+-                enabled: !cameraController.busy
++                enabled: !cameraController.busy && !swipe.active
+                 QuaternionAnimation {
+                     id: rotationAnimation
+                     duration: effect.animationDuration
+-                    easing.type: Easing.OutCubic
++                    // Snapping after a swipe starts more gently, to blend in with the fingers' motion.
++                    easing.type: swipe.settling ? Easing.OutQuad : Easing.OutCubic
++                    onRunningChanged: {
++                        if (!running) {
++                            swipe.settling = false;
++                        }
++                    }
+                 }
+             }
+             Behavior on radius {
+@@ -134,6 +142,17 @@
+                 }
+             }
+ 
++            // Swipe steps from InputActions arrive as horizontal wheel events (see swipe.step).
++            WheelHandler {
++                orientation: Qt.Horizontal
++                target: null
++                onWheel: event => {
++                    if (event.angleDelta.x !== 0) {
++                        swipe.step(Math.sign(event.angleDelta.x));
++                    }
++                }
++            }
++
+             function rotateToLeft() {
+                 if (rotationAnimation.running) {
+                     return;
+@@ -172,9 +191,179 @@
+         }
+     }
+ 
++    // Smooth swipes: during a 3- or 4-finger left/right swipe the cube turns with the fingers,
++    // instead of jumping one face after KWin switches desktops at the end of the swipe.
++    //
++    // With InputActions (3-Finger-Cube-Gesture), the swipe is sent here as a stream of small
++    // horizontal wheel steps, one per few units of finger movement, followed by a Pause key press
++    // when the fingers lift. The cube turns as far as the fingers go, then snaps to the nearest
++    // desktop and switches to it.
++    //
++    // Without InputActions, KWin's own desktop-switching swipe is followed instead. KWin reports
++    // it only up to one desktop, and decides itself whether the swipe switches desktops; when the
++    // swipe ends, the cube settles on whichever desktop is then current.
++    component SmoothSwipe: KWinComponents.SwipeGestureHandler {
++        // +1 turns towards the next desktop (the one KWin switches to for this swipe direction)
++        property real turn: 1
++        onProgressChanged: swipe.follow(turn * progress)
++        onActivated: swipe.finish()
++        onCancelled: swipe.finish()
++    }
++    SmoothSwipe { direction: KWinComponents.SwipeGestureHandler.Direction.Left; fingerCount: 3; turn: 1 }
++    SmoothSwipe { direction: KWinComponents.SwipeGestureHandler.Direction.Right; fingerCount: 3; turn: -1 }
++    SmoothSwipe { direction: KWinComponents.SwipeGestureHandler.Direction.Left; fingerCount: 4; turn: 1 }
++    SmoothSwipe { direction: KWinComponents.SwipeGestureHandler.Direction.Right; fingerCount: 4; turn: -1 }
++
++    QtObject {
++        id: swipe
++
++        // How far each wheel step from InputActions turns the cube, in faces. InputActions sends
++        // one step per 2 units of finger movement. Within longSwipeAt faces of where the swipe
++        // started the cube turns at the short-swipe rate (150 units per face), so short swipes
++        // stay precise; further out it turns 3.5 times as fast (about 43 units per face), so a
++        // long swipe can go all the way around.
++        readonly property real shortStep: 2 / 150
++        readonly property real longStep: 3.5 * shortStep
++        readonly property real longSwipeAt: 0.3
++        // A swipe shorter than this (in faces) stays on the current desktop; anything longer
++        // goes at least one desktop in the swipe's direction.
++        readonly property real deadZone: 0.05
++
++        property bool active: false
++        // true when the steps came from InputActions, so the cube picks the desktop itself
++        property bool stepping: false
++        // true while the cube snaps to a desktop after a swipe
++        property bool settling: false
++        property real startAzimuth: 0
++        property real elevation: 0
++        property real faces: 0
++
++        function begin() {
++            rotationAnimation.stop();
++            const eulerAngles = cameraController.rotation.toEulerAngles();
++            startAzimuth = eulerAngles.y;
++            elevation = eulerAngles.x;
++            faces = 0;
++            active = true;
++        }
++
++        function turnTo(newFaces) {
++            faces = newFaces;
++            cameraController.rotation = Quaternion.fromEulerAngles(elevation, startAzimuth + faces * cube.angleTick, 0);
++        }
++
++        // newFaces: how far to turn from where KWin's swipe started, in faces (0 to 1)
++        function follow(newFaces) {
++            if (!effect.activated || cameraController.busy || stepping) {
++                return;
++            }
++            if (!active) {
++                if (newFaces === 0) {
++                    return;
++                }
++                begin();
++            }
++            turnTo(newFaces);
++        }
++
++        // direction: +1 or -1, one wheel step from InputActions
++        function step(direction) {
++            if (!effect.activated || cameraController.busy) {
++                return;
++            }
++            if (!active) {
++                begin();
++                stepping = true;
++            }
++            turnTo(faces + direction * (Math.abs(faces) < longSwipeAt ? shortStep : longStep));
++            segmentTimeout.stop();
++            // In case the end-of-swipe key press never arrives
++            stepTimeout.restart();
++        }
++
++        // InputActions restarted the swipe because the fingers changed direction (it presses
++        // Shift+Pause). The fingers are still down, so this is still the same swipe: the next
++        // steps carry on from here, and only lifting the fingers snaps the cube. Meanwhile the
++        // desktop facing the user becomes the current one, in case the fingers go on into a
++        // 3-finger swipe down, which closes the cube.
++        function segmentEnded() {
++            if (!active || !stepping) {
++                return;
++            }
++            root.setCurrentDesktop(cube.desktopAt(startAzimuth + faces * cube.angleTick));
++            // If no new steps follow, the new swipe isn't a cube swipe; settle then.
++            segmentTimeout.restart();
++        }
++
++        function finish() {
++            if (!active) {
++                return;
++            }
++            active = false;
++            stepTimeout.stop();
++            segmentTimeout.stop();
++            // Let KWin finish switching desktops (or not) before settling.
++            settleTimer.restart();
++        }
++    }
++
++    Timer {
++        id: stepTimeout
++        interval: 500
++        onTriggered: swipe.finish()
++    }
++
++    Timer {
++        id: segmentTimeout
++        interval: 1000
++        onTriggered: swipe.finish()
++    }
++
++    Timer {
++        id: settleTimer
++        interval: 1
++        onTriggered: {
++            const stepping = swipe.stepping;
++            swipe.stepping = false;
++            if (swipe.active || !effect.activated) {
++                return;
++            }
++            if (stepping) {
++                // Snap to a desktop and switch to it, keeping the cube open. A short swipe always
++                // goes to the next desktop in its direction; a longer one to the nearest desktop.
++                const startFace = Math.round(swipe.startAzimuth / cube.angleTick);
++                const moved = swipe.startAzimuth / cube.angleTick + swipe.faces - startFace;
++                let targetFace = startFace;
++                if (Math.abs(moved) >= swipe.deadZone) {
++                    targetFace += Math.sign(moved) * Math.max(1, Math.round(Math.abs(moved)));
++                }
++                const azimuth = targetFace * cube.angleTick;
++                swipe.settling = true;
++                cameraController.rotation = Quaternion.fromEulerAngles(swipe.elevation, azimuth, 0);
++                root.setCurrentDesktop(cube.desktopAt(azimuth));
++            } else {
++                cameraController.rotation = Quaternion.fromEulerAngles(swipe.elevation, cube.desktopAzimuth(root.currentDesktop), 0);
++            }
++        }
++    }
++
++    Keys.onPressed: event => {
++        // InputActions presses Pause when the fingers lift at the end of a smooth swipe, and
++        // Shift+Pause when it restarts the swipe after a change of direction.
++        if (event.key === Qt.Key_Pause) {
++            if (event.modifiers & Qt.ShiftModifier) {
++                swipe.segmentEnded();
++            } else {
++                swipe.finish();
++            }
++            event.accepted = true;
++        }
++    }
+     Keys.onEscapePressed: effect.deactivate();
+     Keys.onLeftPressed: cameraController.rotateToLeft();
+     Keys.onRightPressed: cameraController.rotateToRight();
++    // Down arrow: go into the desktop facing you, like a 3-finger swipe down after turning the cube.
++    Keys.onDownPressed: root.switchToSelected();
+     Keys.onEnterPressed: root.switchToSelected();
+     Keys.onReturnPressed: root.switchToSelected();
+     Keys.onSpacePressed: root.switchToSelected();
