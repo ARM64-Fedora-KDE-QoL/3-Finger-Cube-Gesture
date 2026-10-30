@@ -12,6 +12,8 @@ Open and close KDE Plasma's **Desktop Cube** with a three-finger swipe on your t
 
 It uses the [InputActions](https://github.com/taj-ny/InputActions) KWin plugin, which the installer builds from source. It also sets up **automatic rebuilds after KWin updates**, so the gesture keeps working without you doing anything.
 
+**InputActions version:** the installer builds a fixed, tested snapshot of InputActions (commit `e3dfb18`, from the project's former main repository, around v0.9.0), not the newest release. That keeps installs predictable, but it means newer InputActions features and fixes aren't included. See [Security notes](#security-notes) for the one place this matters.
+
 ## Requirements
 
 - Fedora with KDE Plasma 6, logged in to a **Wayland** session (the default on Fedora KDE)
@@ -125,7 +127,7 @@ InputActions is compiled against KWin's internal code, so it has to be rebuilt f
 2. **Offline updates** (Discover's default) are applied during a reboot, before anyone logs in. A boot service rebuilds the plugin before the login screen appears, and you get the notification after you log in.
 3. **If a rebuild fails**, you get a *"Cube gesture needs a rebuild"* warning at every login until it's fixed. Re-run `./install.sh`, and check `/var/log/cube-gesture-rebuild.log` for details.
 
-Automatic rebuilds reuse the InputActions version you already have. To update InputActions itself, re-run `./install.sh`.
+Automatic rebuilds reuse the InputActions version you already have. Re-running `./install.sh` rebuilds the same pinned version; moving to a newer InputActions means changing `INPUTACTIONS_COMMIT` near the top of `install.sh` and re-testing the gestures.
 
 ## Security notes
 
@@ -137,7 +139,7 @@ SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess
 
 It gives the user logged in at the machine access to **touchpads only**, the same way Fedora already grants access to sound cards and webcams. The trade-off: any program running as you could read raw finger positions from the touchpad. Keystrokes aren't exposed, because keyboards are separate devices that the rule doesn't match. Adding yourself to the `input` group would also work, but it would expose the keyboard too, so this project avoids it.
 
-This is an InputActions bug, reported upstream (see [`docs/upstream-bug-report-fingers-always-zero.md`](docs/upstream-bug-report-fingers-always-zero.md)). If it's fixed, the rule won't be needed anymore.
+With the InputActions version this project builds, the rule is **required**: that version takes its finger count only from reading the device, ignoring the count KWin provides. Newer InputActions releases have fixed this, and their wiki lists a similar rule as an optional extra ("Additional setup") for advanced touchpad features.
 
 **Automatic rebuilds run as root.** They build only from a root-owned copy of the source (`/var/lib/cube-gesture/src`). That copy is refreshed only when you run `./install.sh` yourself, so nothing you or your programs can edit is ever built or run as root without your password. New plugin files are swapped in with an atomic rename, so the running KWin isn't disturbed.
 
