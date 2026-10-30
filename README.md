@@ -10,9 +10,26 @@ Open and close KDE Plasma's **Desktop Cube** with a three-finger swipe on your t
 | 3-finger swipe **down** | Closes the Desktop Cube (does nothing if it's already closed) |
 | 3-finger swipe left / right, 4-finger swipes | Unchanged; still handled by KDE |
 
-It uses the [InputActions](https://github.com/taj-ny/InputActions) KWin plugin, which the installer builds from source. It also sets up **automatic rebuilds after KWin updates**, so the gesture keeps working without you doing anything.
+It uses the [InputActions](https://github.com/InputActions/kwin) KWin plugin, which the installer builds from source. It also sets up **automatic rebuilds after KWin updates**, so the gesture keeps working without you doing anything.
 
-**InputActions version:** the installer builds a fixed, tested snapshot of InputActions (commit `e3dfb18`, from the project's former main repository, around v0.9.0), not the newest release. That keeps installs predictable, but it means newer InputActions features and fixes aren't included. See [Security notes](#security-notes) for the one place this matters.
+**InputActions version:** the installer builds the InputActions KWin plugin's **v0.9.2.1** stable release, from the project's maintained [`InputActions/kwin`](https://github.com/InputActions/kwin) repository. It's pinned to that exact release, so a future upstream change can't break new installs.
+
+## Versions
+
+There are two releases of this project. **They work the same: same gestures, same installer, same automatic rebuilds.** The only real difference is which copy of InputActions they build, and therefore how long they'll keep working.
+
+| | [v1.0](https://github.com/Cynders-dev/3-Finger-Cube-Gesture/releases/tag/v1.0) (old) | **[v2.0](https://github.com/Cynders-dev/3-Finger-Cube-Gesture/releases/tag/v2.0) (current, recommended)** |
+|---|---|---|
+| InputActions source | Frozen snapshot from InputActions' former main repository (~v0.9.0) | Maintained [`InputActions/kwin`](https://github.com/InputActions/kwin), stable release v0.9.2.1 |
+| Still getting fixes upstream? | **No.** That repository stopped receiving updates | **Yes.** It's where InputActions development happens now |
+| 3-finger up opens / down closes the cube | ✅ | ✅ |
+| Automatic rebuilds after KWin updates, notifications | ✅ | ✅ |
+| Touchpad udev rule | Required | Optional (still installed by default) |
+| Expected lifespan | Until a future KWin update breaks the old code, which will never be fixed | Can follow new InputActions releases |
+
+**Use v2.0.** v1.0 is kept only for reference.
+
+**Upgrading from v1.0:** in your copy of this project, run `git pull` and then `./install.sh`. Your gestures keep working the same. Afterwards you can delete the old v1.0 download: `rm -rf ~/.local/src/InputActions`.
 
 ## Requirements
 
@@ -108,7 +125,7 @@ sudo dnf install git gcc-c++ cmake extra-cmake-modules pkgconf-pkg-config \
 | What | Where | Why |
 |---|---|---|
 | Build packages | `dnf install` (kwin-devel, cmake, gcc-c++, …) | Needed to build the plugin |
-| InputActions source | `~/.local/src/InputActions` | Downloaded from GitHub |
+| InputActions source | `~/.local/src/inputactions-kwin` | Downloaded from GitHub |
 | Root-owned source copy and build | `/var/lib/cube-gesture/` | Used for automatic rebuilds (see [Security notes](#security-notes)) |
 | KWin plugin | `/usr/lib64/qt6/plugins/kwin/effects/plugins/kwin_gestures.so`, `…/configs/inputactions_kwin_kcm.so` | The plugin itself |
 | Gesture config | `~/.config/inputactions/config.yaml` | The up/down cube gestures |
@@ -127,11 +144,11 @@ InputActions is compiled against KWin's internal code, so it has to be rebuilt f
 2. **Offline updates** (Discover's default) are applied during a reboot, before anyone logs in. A boot service rebuilds the plugin before the login screen appears, and you get the notification after you log in.
 3. **If a rebuild fails**, you get a *"Cube gesture needs a rebuild"* warning at every login until it's fixed. Re-run `./install.sh`, and check `/var/log/cube-gesture-rebuild.log` for details.
 
-Automatic rebuilds reuse the InputActions version you already have. Re-running `./install.sh` rebuilds the same pinned version; moving to a newer InputActions means changing `INPUTACTIONS_COMMIT` near the top of `install.sh` and re-testing the gestures.
+Automatic rebuilds reuse the InputActions version you already have. Re-running `./install.sh` rebuilds the same pinned version; moving to a newer InputActions release means changing `INPUTACTIONS_COMMIT` near the top of `install.sh` and re-testing the gestures.
 
 ## Security notes
 
-**The touchpad udev rule.** InputActions counts fingers by reading the touchpad device (`/dev/input/event*`) directly. On Fedora only root and the `input` group can open it, and KWin runs as you, so without the rule every swipe reports 0 fingers and the gestures never fire. The rule is:
+**The touchpad udev rule (optional).** The cube gestures work without it, because KWin tells InputActions how many fingers are on the touchpad. The rule additionally lets InputActions read the touchpad device (`/dev/input/event*`) directly, which enables its extra touchpad features (thumb and palm detection, finger positions, pressure). The installer adds it because the [InputActions wiki](https://wiki.inputactions.org/main/getting-started/installation/kwin.html) recommends it as optional setup. On Fedora only root and the `input` group can open the device, and KWin runs as you, so the rule is what grants that access. It is:
 
 ```
 SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"
@@ -139,7 +156,13 @@ SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess
 
 It gives the user logged in at the machine access to **touchpads only**, the same way Fedora already grants access to sound cards and webcams. The trade-off: any program running as you could read raw finger positions from the touchpad. Keystrokes aren't exposed, because keyboards are separate devices that the rule doesn't match. Adding yourself to the `input` group would also work, but it would expose the keyboard too, so this project avoids it.
 
-With the InputActions version this project builds, the rule is **required**: that version takes its finger count only from reading the device, ignoring the count KWin provides. Newer InputActions releases have fixed this, and their wiki lists a similar rule as an optional extra ("Additional setup") for advanced touchpad features.
+If you'd rather not grant this access, remove the rule after installing; the cube gestures keep working:
+
+```bash
+sudo rm /etc/udev/rules.d/70-touchpad-uaccess.rules && sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input --action=change
+```
+
+Re-running `./install.sh` puts it back.
 
 **Automatic rebuilds run as root.** They build only from a root-owned copy of the source (`/var/lib/cube-gesture/src`). That copy is refreshed only when you run `./install.sh` yourself, so nothing you or your programs can edit is ever built or run as root without your password. New plugin files are swapped in with an atomic rename, so the running KWin isn't disturbed.
 
@@ -147,7 +170,7 @@ With the InputActions version this project builds, the rule is **required**: tha
 
 ```bash
 ./uninstall.sh            # removes everything; keeps your config (renamed) and the downloaded source
-./uninstall.sh --purge    # also deletes the config and ~/.local/src/InputActions
+./uninstall.sh --purge    # also deletes the config and ~/.local/src/inputactions-kwin
 ```
 
 It removes the plugin, the udev rule, the rebuild helper, the dnf hook, the boot service and the login check. The build packages installed with dnf are left in place. Log out and back in afterwards.
@@ -156,7 +179,7 @@ It removes the plugin, the udev rule, the rebuild helper, the dnf hook, the boot
 
 - **Nothing happens when I swipe.** Check for config errors:
   `qdbus-qt6 org.inputactions / org.inputactions.issues`
-  Then check that the touchpad can be read: `qdbus-qt6 org.inputactions / org.inputactions.deviceList` should show `multiTouch: true` for your touchpad. If it says `false`, the udev rule isn't active. Re-run `./install.sh`, then log out and back in.
+  Then check that InputActions sees your touchpad: `qdbus-qt6 org.inputactions / org.inputactions.deviceList` should list it as `[Touchpad]`. (`multiTouch: false` there is fine; it only means the optional udev rule isn't active.) If the effect isn't loaded at all, re-run `./install.sh`, then log out and back in.
 - **The cube doesn't open even though the gesture fires.** Make sure the Desktop Cube effect is enabled (System Settings → Window Management → Desktop Effects → Desktop Cube) and that its keyboard shortcut opens it (Meta+C by default). You can also test the action the gesture uses directly:
   `qdbus-qt6 org.kde.kglobalaccel /component/kwin org.kde.kglobalaccel.Component.invokeShortcut Cube`
 - **I got a "needs a rebuild" notification.** Re-run `./install.sh` and check `/var/log/cube-gesture-rebuild.log`.
@@ -167,5 +190,5 @@ Copyright (C) 2026 Cynders. Licensed under the [GNU General Public License v3.0 
 
 ## Credits
 
-- [InputActions](https://github.com/taj-ny/InputActions) by its developers (GPL-3.0), which does all the gesture work. This project only builds, configures and maintains it.
+- [InputActions](https://github.com/InputActions/kwin) by its developers (GPL-3.0), which does all the gesture work. This project only builds, configures and maintains it.
 - KDE Plasma's Desktop Cube effect.

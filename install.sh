@@ -5,7 +5,7 @@
 #   3-finger swipe down on the touchpad -> close it
 #
 # For Fedora KDE Plasma 6 (Wayland), tested on Fedora Asahi Remix 44 (Apple Silicon MacBook).
-# Builds the InputActions KWin plugin (https://github.com/taj-ny/InputActions) from source,
+# Builds the InputActions KWin plugin (https://github.com/InputActions/kwin, release v0.9.2.1) from source,
 # installs it, writes the gesture config, and sets up automatic rebuilds after KWin updates.
 # See README.md for exactly what it changes on your system.
 #
@@ -14,7 +14,7 @@
 #
 # The plugin must be rebuilt whenever KWin is updated. This script sets that up to happen
 # automatically (dnf hook + boot check) and installs a login check that warns you if it didn't.
-# Re-run this script if you get that warning, or to pull a newer InputActions.
+# Re-run this script if you get that warning.
 # To remove everything: ./uninstall.sh
 #
 # Copyright (C) 2026 Cynders
@@ -26,13 +26,14 @@
 
 set -euo pipefail
 
-SRC_DIR="$HOME/.local/src/InputActions"
+SRC_DIR="$HOME/.local/src/inputactions-kwin"
 
-# InputActions version this project was tested with. The installer builds exactly this commit
-# (and the submodule commits it records), so an upstream change can't break new installs.
-# To move to a newer InputActions: change the commit below, test, and commit the change.
-INPUTACTIONS_REPO="https://github.com/taj-ny/InputActions"
-INPUTACTIONS_COMMIT="e3dfb18ecf2b86437a616ed53a4f7223846c8a5b"
+# InputActions version this project was tested with: the KWin plugin's v0.9.2.1 stable release.
+# The installer builds exactly this commit (and the submodule commits it records), so an
+# upstream change can't break new installs. To move to a newer release: change the commit
+# below (git rev-parse 'vX.Y.Z^{commit}' in a clone of the repo), test, and commit the change.
+INPUTACTIONS_REPO="https://github.com/InputActions/kwin"
+INPUTACTIONS_COMMIT="f61770a60682d1ffb31010f210457cf4ff5228a0"   # v0.9.2.1
 CONFIG_DIR="$HOME/.config/inputactions"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 
@@ -146,8 +147,7 @@ fi
 rm -rf "$BUILD_DIR" "$STAGE_DIR"
 cmake -S "$SRC_DIR" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/usr \
-  -DINPUTACTIONS_BUILD_KWIN=ON || fail "cmake configure failed"
+  -DCMAKE_INSTALL_PREFIX=/usr || fail "cmake configure failed"
 cmake --build "$BUILD_DIR" -j"$(nproc)" || fail "build failed"
 DESTDIR="$STAGE_DIR" cmake --install "$BUILD_DIR" || fail "staged install failed"
 
@@ -208,10 +208,11 @@ say "Building and installing the KWin plugin (sudo; this takes a few minutes)"
 sudo "$HELPER"
 
 # --- 4. Let KWin read the touchpad (udev rule) ------------------------------
-# The plugin counts fingers by reading the touchpad device (/dev/input/event*) itself.
-# By default only root and the 'input' group can open it, and KWin runs as you, so every
-# swipe reports 0 fingers and the 3-finger gestures never fire. This rule grants the
-# logged-in user (and so KWin) access to touchpads only; keyboards are not affected.
+# With this InputActions release, basic swipes work without this rule (KWin supplies the finger
+# count). The rule lets the plugin also read the touchpad device (/dev/input/event*) directly,
+# which enables its extra touchpad features (thumb/palm detection, finger positions, pressure);
+# the InputActions wiki recommends it as optional setup. It grants the logged-in user (and so
+# KWin) access to touchpads only; keyboards are not affected.
 UDEV_RULE_FILE="/etc/udev/rules.d/70-touchpad-uaccess.rules"
 UDEV_RULE="$(cat <<'EOF'
 # Let the logged-in user (and so KWin) read touchpad devices, so the InputActions

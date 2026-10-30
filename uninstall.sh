@@ -6,7 +6,7 @@
 #
 # Kept unless you pass --purge:
 #   ~/.config/inputactions/config.yaml   (renamed to config.yaml.uninstalled-<date>)
-#   ~/.local/src/InputActions             (the downloaded source)
+#   ~/.local/src/inputactions-kwin        (the downloaded source)
 # Always kept: the build packages installed with dnf (kwin-devel, cmake, ...).
 #
 # Usage (as your normal user; it asks for sudo when needed):
@@ -37,7 +37,7 @@ PLUGIN_FILES=(
 )
 UDEV_RULE_FILE=/etc/udev/rules.d/70-touchpad-uaccess.rules
 CONFIG_FILE="$HOME/.config/inputactions/config.yaml"
-SRC_DIR="$HOME/.local/src/InputActions"
+SRC_DIR="$HOME/.local/src/inputactions-kwin"
 
 QDBUS=""
 for q in qdbus6 qdbus-qt6 qdbus; do
